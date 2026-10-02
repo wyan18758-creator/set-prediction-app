@@ -1,4 +1,4 @@
-uimport streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
@@ -9,27 +9,28 @@ st.set_page_config(page_title="SET Index Live & Session Prediction Dashboard", l
 st.title("📊 SET Index Live & Session-based Prediction Dashboard")
 st.markdown("ထိုင်းစတော့မားကတ် (`^SET.BK`) ၏ အချိန်အလိုက် Live ဈေးနှုန်းများနှင့် အပိတ်စျေး ခန့်မှန်းပေးသော စနစ်")
 
-# Fetch Live Market Data
-@st.cache_data(ttl=15)
+# Fetch Live Market Data with Timeout/Error Safety
+@st.cache_data(ttl=30)
 def load_live_data():
     try:
         ticker = yf.Ticker("^SET.BK")
         df = ticker.history(period="1d", interval="1m")
-        if df.empty:
+        if df is None or df.empty:
             df = ticker.history(period="5d", interval="5m")
         
-        if not df.empty:
+        if df is not None and not df.empty:
             df.reset_index(inplace=True)
             dt_col = "Datetime" if "Datetime" in df.columns else "Date"
             if dt_col in df.columns:
                 df["Dt"] = pd.to_datetime(df[dt_col])
                 df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
             return df
-        return None
+        return pd.DataFrame()
     except Exception as e:
-        return None
+        return pd.DataFrame()
 
-df = load_live_data()
+with st.spinner("ဈေးကွက်ဒေတာများကို ချိတ်ဆက်နေပါသည်... ကျေးဇူးပြု၍ ခဏစောင့်ပါ 🔄"):
+    df = load_live_data()
 
 # Session Selector Tab
 session_tab = st.radio("⏰ ရွေးချယ်ရန် Session:", ["🌅 မနက်ပိုင်း Session (၉:၀၀ - ၁၂:၀၁)", "🌇 ညနေပိုင်း Session (၁:၀၀ - ၄:၁၀)"], horizontal=True)
@@ -40,17 +41,15 @@ if "🌅 မနက်ပိုင်း" in session_tab:
     st.subheader("🎯 မနက်ပိုင်း Session (၁၂:၀၁ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
     st.info("📌 Live ဈေးနှုန်းများကို မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ တိုက်ရိုက်ပြသသည်။ ခန့်မှန်းချက်အတွက် ၉:၀၀ မှ ၁၁:၃၀ ထိ ဒေတာကို အသုံးပြုသည်။")
     
-    morning_live_df = None
-    morning_pred_df = None
+    morning_live_df = pd.DataFrame()
+    morning_pred_df = pd.DataFrame()
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        # Live display from 9:00 to 12:01
         morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(12, 1))]
-        # Prediction data range from 9:00 to 11:30
         morning_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(11, 30))]
     
-    if morning_live_df is not None and not morning_live_df.empty:
+    if not morning_live_df.empty:
         latest_row = morning_live_df.iloc[-1]
         first_row = morning_live_df.iloc[0]
         price_diff = latest_row["Close"] - first_row["Close"]
@@ -67,10 +66,10 @@ if "🌅 မနက်ပိုင်း" in session_tab:
         fig = px.line(morning_live_df, x="Time", y="Close", title="SET Index Morning Live Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("ယနေ့အတွက် မနက်ပိုင်း Live ဒေတာများ မရရှိသေးပါ။")
+        st.warning("ယနေ့အတွက် မနက်ပိုင်း Live ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
     if st.button("🔮 ၁၁:၃၀ နာရီတွင် မနက် ၁၂:၀၁ အပိတ်စျေး ခန့်မှန်းရန်"):
-        if morning_pred_df is not None and not morning_pred_df.empty:
+        if not morning_pred_df.empty:
             last_close = morning_pred_df.iloc[-1]["Close"]
             base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
             trend_diff = last_close - morning_pred_df.iloc[0]["Close"]
@@ -90,17 +89,15 @@ else:
     st.subheader("🎯 ညနေပိုင်း Session (၄:၁၀ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
     st.info("📌 Live ဈေးနှုန်းများကို နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ (စျေးပိတ်ချိန်) အထိ တိုက်ရိုက်ပြသသည်။ ခန့်မှန်းချက်အတွက် ၁:၀၀ မှ ၃:၃၀ ထိ ဒေတာကို အသုံးပြုသည်။")
     
-    evening_live_df = None
-    evening_pred_df = None
+    evening_live_df = pd.DataFrame()
+    evening_pred_df = pd.DataFrame()
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        # Live display from 13:00 to 16:10
         evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(16, 10))]
-        # Prediction data range from 13:00 to 15:30
         evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
     
-    if evening_live_df is not None and not evening_live_df.empty:
+    if not evening_live_df.empty:
         latest_row = evening_live_df.iloc[-1]
         first_row = evening_live_df.iloc[0]
         price_diff = latest_row["Close"] - first_row["Close"]
@@ -117,10 +114,10 @@ else:
         fig = px.line(evening_live_df, x="Time", y="Close", title="SET Index Evening Live Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("ယနေ့အတွက် ညနေပိုင်း Live ဒေတာများ မရရှိသေးပါ။")
+        st.warning("ယနေ့အတွက် ညနေပိုင်း Live ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
     if st.button("🔮 ၃:၃၀ နာရီတွင် ညနေ ၄:၁၀ အပိတ်စျေး ခန့်မှန်းရန်"):
-        if evening_pred_df is not None and not evening_pred_df.empty:
+        if not evening_pred_df.empty:
             last_close = evening_pred_df.iloc[-1]["Close"]
             base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
             trend_diff = last_close - evening_pred_df.iloc[0]["Close"]
