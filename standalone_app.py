@@ -26,7 +26,7 @@ def load_live_data():
                 # Convert timezone to Myanmar Time (UTC +6:30) if timezone-aware
                 if df["Dt"].dt.tz is not None:
                     df["Dt"] = df["Dt"].dt.tz_convert("Asia/Rangoon")
-                    df["Dt"] = df["Dt"].dt.tz_localize(None) # Remove tz info for easy comparison
+                    df["Dt"] = df["Dt"].dt.tz_localize(None)
                 
                 df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
             return df
@@ -44,14 +44,20 @@ st.divider()
 
 if "🌅 မနက်ပိုင်း" in session_tab:
     st.subheader("🎯 မနက်ပိုင်း Session (၁၂:၀၁ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 Live ဈေးနှုန်းများကို မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ တိုက်ရိုက်ပြသသည်။ ခန့်မှန်းချက်အတွက် ၉:၀၀ မှ ၁၁:၃၀ ထိ ဒေတာကို အသုံးပြုသည်။")
+    st.info("📌 မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ Live ဈေးနှုန်းများကို ပြသသည်။ (စျေးပိတ်သွားပါက နောက်ဆုံးပိတ်စျေး အခြေအနေကို ဆက်ပြမည်)")
     
     morning_live_df = pd.DataFrame()
     morning_pred_df = pd.DataFrame()
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
+        # Filter data for morning session (9:00 to 12:01)
         morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(12, 1))]
+        
+        # If no strict 12:01 data due to timezone/delay, take up to latest morning data if after 12:01
+        if morning_live_df.empty:
+            morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(13, 0))]
+            
         morning_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(11, 30))]
     
     if not morning_live_df.empty:
@@ -61,18 +67,18 @@ if "🌅 မနက်ပိုင်း" in session_tab:
         pct_change = (price_diff / first_row["Close"]) * 100
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("🔴 မနက်ပိုင်း Live စျေးနှုန်း (၉:၀၀ - ၁၂:၀၁)", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
+        m1.metric("🔴 မနက်ပိုင်း စျေးနှုန်းအခြေအနေ", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
         m2.metric("📈 အမြင့်ဆုံးစျေး (High)", f"{morning_live_df['High'].max():.2f}")
         m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{morning_live_df['Low'].min():.2f}")
         
-        st.write(f"📈 **မနက်ပိုင်း Live ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(morning_live_df)} ခု)**")
+        st.write(f"📈 **မနက်ပိုင်း ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(morning_live_df)} ခု)**")
         cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in morning_live_df.columns]
         st.dataframe(morning_live_df[cols_to_show].tail(10), use_container_width=True)
         
-        fig = px.line(morning_live_df, x="Time", y="Close", title="SET Index Morning Live Movement", markers=True)
+        fig = px.line(morning_live_df, x="Time", y="Close", title="SET Index Morning Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("ယနေ့အတွက် မနက်ပိုင်း Live ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
+        st.warning("ယနေ့အတွက် မနက်ပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
     if st.button("🔮 ၁၁:၃၀ နာရီတွင် မနက် ၁၂:၀၁ အပိတ်စျေး ခန့်မှန်းရန်"):
         if not morning_pred_df.empty:
@@ -93,14 +99,15 @@ if "🌅 မနက်ပိုင်း" in session_tab:
 
 else:
     st.subheader("🎯 ညနေပိုင်း Session (၄:၁၀ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 Live ဈေးနှုန်းများကို နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ (စျေးပိတ်ချိန်) အထိ တိုက်ရိုက်ပြသသည်။ ခန့်မှန်းချက်အတွက် ၁:၀၀ မှ ၃:၃၀ ထိ ဒေတာကို အသုံးပြုသည်။")
+    st.info("📌 နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ အထိ ဈေးနှုန်းများကို ပြသသည်။ (စျေးပိတ်သွားပါက နောက်ဆုံးပိတ်စျေး အခြေအနေကို ဆက်ပြမည်)")
     
     evening_live_df = pd.DataFrame()
     evening_pred_df = pd.DataFrame()
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(16, 10))]
+        # Filter data for evening session (13:00 onwards)
+        evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0))]
         evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
     
     if not evening_live_df.empty:
@@ -110,18 +117,18 @@ else:
         pct_change = (price_diff / first_row["Close"]) * 100
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("🔴 ညနေပိုင်း Live စျေးနှုန်း (၁:၀၀ - ၄:၁၀)", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
+        m1.metric("🔴 ညနေပိုင်း ပိတ်သိမ်းစျေး အခြေအနေ", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
         m2.metric("📈 အမြင့်ဆုံးစျေး (High)", f"{evening_live_df['High'].max():.2f}")
         m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{evening_live_df['Low'].min():.2f}")
         
-        st.write(f"📈 **ညနေပိုင်း Live ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(evening_live_df)} ခု)**")
+        st.write(f"📈 **ညနေပိုင်း ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(evening_live_df)} ခု)**")
         cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in evening_live_df.columns]
         st.dataframe(evening_live_df[cols_to_show].tail(10), use_container_width=True)
         
-        fig = px.line(evening_live_df, x="Time", y="Close", title="SET Index Evening Live Movement", markers=True)
+        fig = px.line(evening_live_df, x="Time", y="Close", title="SET Index Evening Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("ယနေ့အတွက် ညနေပိုင်း Live ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
+        st.warning("ယနေ့အတွက် ညနေပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
     if st.button("🔮 ၃:၃၀ နာရီတွင် ညနေ ၄:၁၀ အပိတ်စျေး ခန့်မှန်းရန်"):
         if not evening_pred_df.empty:
