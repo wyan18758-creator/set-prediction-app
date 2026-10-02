@@ -51,10 +51,8 @@ if "🌅 မနက်ပိုင်း" in session_tab:
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        # Filter data for morning session (9:00 to 12:01)
         morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(12, 1))]
         
-        # If no strict 12:01 data due to timezone/delay, take up to latest morning data if after 12:01
         if morning_live_df.empty:
             morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(13, 0))]
             
@@ -95,7 +93,7 @@ if "🌅 မနက်ပိုင်း" in session_tab:
             st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
             st.caption(f"အခြေခံဈေး (၁၁:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
         else:
-            st.markdown("### `🔮 2 ၊ 5 ၊ 8` (Default)")
+            st.warning("⚠️ ခန့်မှန်းရန် လုံလောက်သော ဒေတာ မရှိသေးပါ။")
 
 else:
     st.subheader("🎯 ညနေပိုင်း Session (၄:၁၀ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
@@ -106,7 +104,6 @@ else:
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        # Filter data for evening session (13:00 onwards)
         evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0))]
         evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
     
@@ -145,7 +142,7 @@ else:
             st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
             st.caption(f"အခြေခံဈေး (၃:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
         else:
-            st.markdown("### `🔮 3 ၊ 7 ၊ 9` (Default)")
+            st.warning("⚠️ ခန့်မှန်းရန် လုံလောက်သော ဒေတာ မရှိသေးပါ။")
 
 # Telegram Bot Notification Setup
 st.subheader("📱 Telegram Bot သတိပေးချက်များ (Alert Settings)")
