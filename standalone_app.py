@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 st.set_page_config(page_title="SET Index Live & Session Prediction Dashboard", layout="wide")
 
 st.title("📊 SET Index Live & Session-based Prediction Dashboard")
 st.markdown("ထိုင်းစတော့မားကတ် (`^SET.BK`) ၏ အချိန်အလိုက် Live ဈေးနှုန်းများနှင့် အပိတ်စျေး ခန့်မှန်းပေးသော စနစ်")
 
-# Fetch Live Market Data with Timeout/Error Safety
+# Fetch Live Market Data and adjust Timezone to Myanmar Time (+6:30)
 @st.cache_data(ttl=30)
 def load_live_data():
     try:
@@ -23,6 +23,11 @@ def load_live_data():
             dt_col = "Datetime" if "Datetime" in df.columns else "Date"
             if dt_col in df.columns:
                 df["Dt"] = pd.to_datetime(df[dt_col])
+                # Convert timezone to Myanmar Time (UTC +6:30) if timezone-aware
+                if df["Dt"].dt.tz is not None:
+                    df["Dt"] = df["Dt"].dt.tz_convert("Asia/Rangoon")
+                    df["Dt"] = df["Dt"].dt.tz_localize(None) # Remove tz info for easy comparison
+                
                 df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
             return df
         return pd.DataFrame()
@@ -61,7 +66,8 @@ if "🌅 မနက်ပိုင်း" in session_tab:
         m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{morning_live_df['Low'].min():.2f}")
         
         st.write(f"📈 **မနက်ပိုင်း Live ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(morning_live_df)} ခု)**")
-        st.dataframe(morning_live_df[["Time", "Open", "High", "Low", "Close", "Volume"]].tail(10), use_container_width=True)
+        cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in morning_live_df.columns]
+        st.dataframe(morning_live_df[cols_to_show].tail(10), use_container_width=True)
         
         fig = px.line(morning_live_df, x="Time", y="Close", title="SET Index Morning Live Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
@@ -109,7 +115,8 @@ else:
         m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{evening_live_df['Low'].min():.2f}")
         
         st.write(f"📈 **ညနေပိုင်း Live ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(evening_live_df)} ခု)**")
-        st.dataframe(evening_live_df[["Time", "Open", "High", "Low", "Close", "Volume"]].tail(10), use_container_width=True)
+        cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in evening_live_df.columns]
+        st.dataframe(evening_live_df[cols_to_show].tail(10), use_container_width=True)
         
         fig = px.line(evening_live_df, x="Time", y="Close", title="SET Index Evening Live Movement", markers=True)
         st.plotly_chart(fig, use_container_width=True)
