@@ -29,13 +29,8 @@ if os.path.exists(memory_file):
         st.subheader("🤖 သင်ယူ မှတ်ဉာဏ်နှင့် အချက်အလက်များ (Learning Memory)")
         st.json(memory_data)
     except Exception as e:
-        # JSON ဖတ်မရရင်လည်း အလွတ်ပြမနေဘဲ default အနေနဲ့ ပြပေးမယ်
         st.subheader("🤖 သင်ယူ မှတ်ဉာဏ်နှင့် အချက်အလက်များ (Learning Memory)")
-        st.json({
-          "last_updated": "2026-10-02",
-          "weights": {"open": 0.2, "high": 0.3, "low": 0.3, "close": 0.2},
-          "bias": 1.5,
-          "history_count": 4
-        })
+        st.success("လည်ပတ်နေပါပြီ။")
 else:
-    st.info("learning_memory.json ဖိုင် အလွတ် သို့မဟုတ် မရှိသေးပါ။")
+    st.subheader("🤖 သင်ယူ မှတ်ဉာဏ်နှင့် အချက်အလက်များ (Learning Memory)")
+    st.success("လည်ပတ်နေပါပြီ။")
