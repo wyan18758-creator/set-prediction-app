@@ -9,16 +9,23 @@ st.set_page_config(page_title="SET Index Live Prediction Dashboard", layout="wid
 st.title("📊 SET Index Live Session-based Prediction Dashboard")
 st.markdown("ထိုင်းစတော့မားကတ် (`^SET.BK`) ၏ မနက်ပိုင်းနှင့် ညနေပိုင်း Live စျေးနှုန်းများကို တိုက်ရိုက်စောင့်ကြည့်၍ အပိတ်စျေး ခန့်မှန်းပေးသော စနစ်")
 
-# Fetch Live Market Data for Today
-@st.cache_data(ttl=30)
+# Fetch Live Market Data with better handling
+@st.cache_data(ttl=15)
 def load_live_data():
     try:
         ticker = yf.Ticker("^SET.BK")
-        df = ticker.history(period="1d", interval="2m")
+        # Get 1-day intraday data
+        df = ticker.history(period="1d", interval="1m")
+        if df.empty:
+            df = ticker.history(period="5d", interval="5m")
+        
         if not df.empty:
             df.reset_index(inplace=True)
-            if "Datetime" in df.columns:
-                df["Dt"] = pd.to_datetime(df["Datetime"])
+            # Handle different datetime column names from yfinance
+            dt_col = "Datetime" if "Datetime" in df.columns else "Date"
+            if dt_col in df.columns:
+                df["Dt"] = pd.to_datetime(df["Dt"] if "Dt" in df.columns else df[dt_col])
+                # Convert to local time / string format
                 df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
             return df
         return None
@@ -38,10 +45,11 @@ if "🌅 မနက်ပိုင်း" in session_tab:
     
     morning_df = None
     if df is not None and not df.empty and "Dt" in df.columns:
-        morning_df = df[(df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(11, 30))]
+        # Filter for today's date and morning hours
+        today_date = df["Dt"].dt.date.max()
+        morning_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(11, 30))]
     
     if morning_df is not None and not morning_df.empty:
-        # Live Price Metric Display
         latest_row = morning_df.iloc[-1]
         first_row = morning_df.iloc[0]
         price_diff = latest_row["Close"] - first_row["Close"]
@@ -83,10 +91,10 @@ else:
     
     evening_df = None
     if df is not None and not df.empty and "Dt" in df.columns:
-        evening_df = df[(df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
+        today_date = df["Dt"].dt.date.max()
+        evening_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
     
     if evening_df is not None and not evening_df.empty:
-        # Live Price Metric Display
         latest_row = evening_df.iloc[-1]
         first_row = evening_df.iloc[0]
         price_diff = latest_row["Close"] - first_row["Close"]
