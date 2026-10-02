@@ -1,4 +1,4 @@
-import streamlit as st
+uimport streamlit as st
 import pandas as pd
 import plotly.express as px
 import yfinance as yf
