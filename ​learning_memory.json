@@ -1,11 +1,6 @@
 {
+  "model_version": "1.0.0",
   "last_updated": "2026-10-02",
-  "weights": {
-    "open": 0.2,
-    "high": 0.3,
-    "low": 0.3,
-    "close": 0.2
-  },
-  "bias": 1.5,
-  "history_count": 4
+  "status": "active",
+  "notes": "Standalone mobile PWA dashboard memory setup."
 }
