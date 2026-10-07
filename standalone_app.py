@@ -1,172 +1,349 @@
-import streamlit as st
+import json
+from datetime import datetime, time, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import requests
+import streamlit as st
 import yfinance as yf
-from datetime import datetime, time, timedelta
 
-st.set_page_config(page_title="SET Index Live & Session Prediction Dashboard", layout="wide")
+st.set_page_config(page_title="SET Index Pattern Dashboard", page_icon="ðŸ“Š", layout="wide")
 
-st.title("📊 SET Index Live & Session-based Prediction Dashboard")
-st.markdown("ထိုင်းစတော့မားကတ် (`^SET.BK`) ၏ အချိန်အလိုက် Live ဈေးနှုန်းများနှင့် အပိတ်စျေး ခန့်မှန်းပေးသော စနစ်")
+SYMBOL = "^SET.BK"
+TZ = ZoneInfo("Asia/Yangon")
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+PATTERN_FILE = DATA_DIR / "patterns.csv"
+RAW_FILE = DATA_DIR / "raw_prices.csv"
 
-# Fetch Live Market Data and adjust Timezone to Myanmar Time (+6:30)
-@st.cache_data(ttl=30)
+MORNING_START = time(9, 0)
+MORNING_DATA_END = time(11, 30)
+MORNING_OUTPUT = time(11, 35)
+MORNING_TARGET = time(12, 1)
+
+EVENING_START = time(13, 0)
+EVENING_DATA_END = time(15, 30)
+EVENING_OUTPUT = time(15, 35)
+EVENING_TARGET = time(16, 10)
+
+PATTERN_COLUMNS = [
+    "date", "session", "target_time", "window_start", "window_end",
+    "start_index", "end_index", "high", "low", "net_change", "range",
+    "up_moves", "down_moves", "direction_changes", "pattern", "target_digit"
+]
+
+
+def empty_patterns():
+    return pd.DataFrame(columns=PATTERN_COLUMNS)
+
+
+def load_patterns():
+    if not PATTERN_FILE.exists():
+        return empty_patterns()
+    try:
+        df = pd.read_csv(PATTERN_FILE)
+        for col in PATTERN_COLUMNS:
+            if col not in df.columns:
+                df[col] = np.nan
+        return df[PATTERN_COLUMNS]
+    except Exception:
+        return empty_patterns()
+
+
+def save_patterns(df):
+    df.drop_duplicates(
+        subset=["date", "session", "target_time"], keep="last"
+    ).to_csv(PATTERN_FILE, index=False)
+
+
+def load_raw():
+    if not RAW_FILE.exists():
+        return pd.DataFrame(columns=["timestamp", "price"])
+    try:
+        df = pd.read_csv(RAW_FILE)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        return df.dropna(subset=["timestamp", "price"])
+    except Exception:
+        return pd.DataFrame(columns=["timestamp", "price"])
+
+
+def append_raw(data):
+    if data.empty:
+        return
+    old = load_raw()
+    new = data[["Dt", "Close"]].rename(
+        columns={"Dt": "timestamp", "Close": "price"}
+    )
+    new["timestamp"] = pd.to_datetime(new["timestamp"], utc=True)
+    out = pd.concat([old, new], ignore_index=True)
+    out = out.drop_duplicates(subset=["timestamp"], keep="last")
+    out.sort_values("timestamp").tail(50000).to_csv(RAW_FILE, index=False)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
 def load_live_data():
     try:
-        ticker = yf.Ticker("^SET.BK")
-        df = ticker.history(period="1d", interval="1m")
+        df = yf.download(
+            SYMBOL, period="7d", interval="1m", auto_adjust=False,
+            progress=False, prepost=False, threads=False
+        )
         if df is None or df.empty:
-            df = ticker.history(period="5d", interval="5m")
-        
-        if df is not None and not df.empty:
-            df.reset_index(inplace=True)
-            dt_col = "Datetime" if "Datetime" in df.columns else "Date"
-            if dt_col in df.columns:
-                df["Dt"] = pd.to_datetime(df[dt_col])
-                # Convert timezone to Myanmar Time (UTC +6:30) if timezone-aware
-                if df["Dt"].dt.tz is not None:
-                    df["Dt"] = df["Dt"].dt.tz_convert("Asia/Rangoon")
-                    df["Dt"] = df["Dt"].dt.tz_localize(None)
-                
-                df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
-                # Add time value in minutes from 00:00 for easy comparison
-                df["time_val"] = df["Dt"].dt.hour * 60 + df["Dt"].dt.minute
-            return df
-        return pd.DataFrame()
-    except Exception as e:
-        return pd.DataFrame()
+            return pd.DataFrame(), "Yahoo Finance data á€™á€›á€•á€«"
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+        dt_col = "Datetime" if "Datetime" in df.columns else "Date"
+        df["Dt"] = pd.to_datetime(df[dt_col], utc=True).dt.tz_convert(TZ)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col not in df.columns:
+                df[col] = np.nan
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["Dt", "Close"]).copy()
+        df["Date"] = df["Dt"].dt.date.astype(str)
+        df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        df["time_val"] = (
+            df["Dt"].dt.hour * 60
+            + df["Dt"].dt.minute
+            + df["Dt"].dt.second / 60
+        )
+        return df.sort_values("Dt").reset_index(drop=True), ""
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
 
-with st.spinner("ဈေးကွက်ဒေတာများကို ချိတ်ဆက်နေပါသည်... ကျေးဇူးပြု၍ ခဏစောင့်ပါ 🔄"):
-    df = load_live_data()
 
-# Session Selector Tab
-session_tab = st.radio("⏰ ရွေးချယ်ရန် Session:", ["🌅 မနက်ပိုင်း Session (၉:၀၀ - ၁၂:၀၁)", "🌇 ညနေပိုင်း Session (၁:၀၀ - ၄:၁၀)"], horizontal=True)
+def last_digit(price):
+    return int(f"{float(price):.2f}"[-1])
+
+
+def session_bounds(session):
+    if session == "morning":
+        return MORNING_START, MORNING_DATA_END, MORNING_OUTPUT, MORNING_TARGET
+    return EVENING_START, EVENING_DATA_END, EVENING_OUTPUT, EVENING_TARGET
+
+
+def current_session_data(df, session):
+    if df.empty:
+        return df
+    start, data_end, _, _ = session_bounds(session)
+    date_value = df["Date"].max()
+    start_val = start.hour * 60 + start.minute
+    end_val = data_end.hour * 60 + data_end.minute
+    return df[
+        (df["Date"] == date_value)
+        & (df["time_val"] >= start_val)
+        & (df["time_val"] <= end_val)
+    ].copy()
+
+
+def calculate_features(rows):
+    if rows is None or len(rows) < 2:
+        return None
+    rows = rows.sort_values("Dt")
+    prices = rows["Close"].astype(float).to_numpy()
+    diffs = np.diff(prices)
+    signs = np.sign(diffs)
+    signs = signs[signs != 0]
+    changes = int(np.sum(signs[1:] != signs[:-1])) if len(signs) > 1 else 0
+    first, last = float(prices[0]), float(prices[-1])
+    high, low = float(prices.max()), float(prices.min())
+    return {
+        "window_start": rows["Dt"].iloc[0].strftime("%H:%M:%S"),
+        "window_end": rows["Dt"].iloc[-1].strftime("%H:%M:%S"),
+        "start_index": first, "end_index": last, "high": high, "low": low,
+        "net_change": last - first, "range": high - low,
+        "up_moves": int((diffs > 0).sum()),
+        "down_moves": int((diffs < 0).sum()),
+        "direction_changes": changes,
+    }
+
+
+def label_pattern(f):
+    if f is None:
+        return "UNKNOWN"
+    net, rng = f["net_change"], f["range"]
+    if net > 0.5 and f["down_moves"] > 0:
+        direction = "UP_REVERSAL"
+    elif net < -0.5 and f["up_moves"] > 0:
+        direction = "DOWN_REVERSAL"
+    elif net > 0.1:
+        direction = "UP"
+    elif net < -0.1:
+        direction = "DOWN"
+    else:
+        direction = "FLAT"
+    volatility = "HIGH" if rng >= 2 else "MEDIUM" if rng >= 0.8 else "LOW"
+    return f"{direction}_{volatility}"
+
+
+def predict_top3(patterns, session, prediction_data):
+    features = calculate_features(prediction_data)
+    if features is None:
+        return None, "11:30/15:30 cutoff data á€™á€œá€¯á€¶á€œá€±á€¬á€€á€ºá€•á€«"
+    pattern = label_pattern(features)
+    selected = patterns[
+        (patterns["session"] == session)
+        & (patterns["pattern"] == pattern)
+    ].copy()
+    if len(selected) < 3:
+        selected = patterns[patterns["session"] == session].copy()
+    if selected.empty:
+        return {"features": features, "pattern": pattern, "top3": []}, "Historical data á€™á€›á€¾á€­á€žá€±á€¸á€•á€«"
+    digits = pd.to_numeric(selected["target_digit"], errors="coerce").dropna().astype(int)
+    counts = digits.value_counts().reindex(range(10), fill_value=0)
+    total = int(counts.sum())
+    ranked = counts.sort_values(ascending=False).head(3)
+    top3 = [(int(d), round(float(n / total * 100), 1)) for d, n in ranked.items()]
+    return {"features": features, "pattern": pattern, "top3": top3}, None
+
+
+def send_telegram(token, chat_id, text):
+    response = requests.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data={"chat_id": chat_id, "text": text}, timeout=10
+    )
+    response.raise_for_status()
+
+
+st.title("ðŸ“Š SET Index Live & Session Pattern Dashboard")
+st.markdown("SET Index data á€€á€­á€¯ cutoff á€¡á€á€»á€­á€”á€ºá€¡á€‘á€­ á€…á€¯á€…á€Šá€ºá€¸á€•á€¼á€®á€¸ á€á€…á€ºá€€á€¼á€­á€™á€ºá€á€Šá€ºá€¸ Top 3 á€‘á€¯á€á€ºá€•á€±á€¸á€žá€±á€¬ dashboard")
+
+with st.sidebar:
+    session = st.radio(
+        "Session á€›á€½á€±á€¸á€•á€«", ["morning", "evening"],
+        format_func=lambda x: "ðŸŒ… á€™á€”á€€á€ºá€•á€­á€¯á€„á€ºá€¸" if x == "morning" else "ðŸŒ‡ á€Šá€”á€±á€•á€­á€¯á€„á€ºá€¸"
+    )
+    st.info(
+        "á€™á€”á€€á€º: 11:30 cutoff â†’ 11:35 output â†’ 12:01 target\n\n"
+        "á€Šá€”á€±: 15:30 cutoff â†’ 15:35 output â†’ 16:10 target"
+    )
+
+patterns = load_patterns()
+data, error = load_live_data()
+
+if error:
+    st.warning(f"Live data error: {error}")
+if data.empty:
+    st.error("SET data á€™á€›á€•á€«á‹ Internet/yfinance symbol á€€á€­á€¯á€…á€…á€ºá€•á€«á‹")
+    st.stop()
+
+append_raw(data)
+latest = data.iloc[-1]
+st.metric("Latest SET Index", f"{float(latest['Close']):.2f}")
+st.caption(f"Last update: {latest['Dt'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+start_at, cutoff_at, output_at, target_at = session_bounds(session)
+session_data = current_session_data(data, session)
+
+if session_data.empty:
+    st.warning("á€›á€½á€±á€¸á€‘á€¬á€¸á€á€²á€· session á€¡á€á€½á€€á€º data á€™á€›á€žá€±á€¸á€•á€«á‹")
+else:
+    st.dataframe(
+        session_data[["Time", "Open", "High", "Low", "Close", "Volume"]].tail(20),
+        use_container_width=True, hide_index=True
+    )
+    st.plotly_chart(
+        px.line(session_data, x="Dt", y="Close", title=f"{session.title()} Session"),
+        use_container_width=True
+    )
+
+now = datetime.now(TZ).time()
+st.info(
+    f"Data á€…á€¯á€™á€Šá€·á€ºá€¡á€á€»á€­á€”á€º: {start_at.strftime('%H:%M')}â€“{cutoff_at.strftime('%H:%M')} | "
+    f"á€‚á€á€”á€ºá€¸á€‘á€¯á€á€ºá€™á€Šá€·á€ºá€¡á€á€»á€­á€”á€º: {output_at.strftime('%H:%M')} | "
+    f"Target: {target_at.strftime('%H:%M')}"
+)
+
+if st.button(
+    f"ðŸ”® {output_at.strftime('%H:%M')} á€™á€¾á€¬ á€‚á€á€”á€ºá€¸ áƒ á€œá€¯á€¶á€¸ á€á€…á€ºá€€á€¼á€­á€™á€ºá€á€Šá€ºá€¸á€‘á€¯á€á€ºá€™á€Šá€º",
+    type="primary", key=f"predict_{session}"
+):
+    if now < output_at:
+        st.warning(f"{output_at.strftime('%H:%M')} á€™á€›á€±á€¬á€€á€ºá€žá€±á€¸á€•á€«á‹")
+    elif now >= target_at:
+        st.warning(f"Target time {target_at.strftime('%H:%M')} á€€á€»á€±á€¬á€ºá€žá€½á€¬á€¸á€•á€«á€•á€¼á€®á‹")
+    elif session_data.empty:
+        st.warning("Cutoff data á€™á€›á€¾á€­á€žá€±á€¸á€•á€«á‹")
+    elif st.session_state.get(f"done_{session}"):
+        st.info("á€’á€® session á€¡á€á€½á€€á€º prediction á€€á€­á€¯ á€á€…á€ºá€€á€¼á€­á€™á€ºá€‘á€¯á€á€ºá€•á€¼á€®á€¸á€žá€¬á€¸á€•á€«á‹")
+    else:
+        result, message = predict_top3(patterns, session, session_data)
+        st.session_state[f"done_{session}"] = True
+        if result["top3"]:
+            st.success(
+                f"Pattern: {result['pattern']} | "
+                f"Output: {output_at.strftime('%H:%M')} | "
+                f"Target: {target_at.strftime('%H:%M')}"
+            )
+            st.markdown(
+                "### ðŸ”® " + " áŠ ".join(
+                    f"{digit} ({prob}%)" for digit, prob in result["top3"]
+                )
+            )
+        else:
+            st.info(message)
+        st.json(result["features"])
 
 st.divider()
-
-if "🌅 မနက်ပိုင်း" in session_tab:
-    st.subheader("🎯 မနက်ပိုင်း Session (၁၂:၀၁ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ Live ဈေးနှုန်းများကို ပြသသည်။ (၁၁:၃၅ တွင် ဂဏန်းထွက်ပြီး တစ်နေ့ကုန်သည်အထိ ဆက်ပြမည်)")
-    
-    morning_live_df = pd.DataFrame()
-    morning_pred_df = pd.DataFrame()
-    current_time_val = datetime.now().hour * 60 + datetime.now().minute
-    
-    if df is not None and not df.empty and "Dt" in df.columns:
-        today_date = df["Dt"].dt.date.max()
-        morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 12 * 1)]
-        
-        if morning_live_df.empty:
-            morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 13 * 60)]
-            
-        # ၉:၀၀ မှ ၁၁:၃၀ အတွင်း ဒေတာများကို ခန့်မှန်းရန် စုဆောင်းသည်
-        morning_pred_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 11 * 30)]
-    
-    if not morning_live_df.empty:
-        latest_row = morning_live_df.iloc[-1]
-        first_row = morning_live_df.iloc[0]
-        price_diff = latest_row["Close"] - first_row["Close"]
-        pct_change = (price_diff / first_row["Close"]) * 100
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("🔴 မနက်ပိုင်း စျေးနှုန်းအခြေအနေ", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
-        m2.metric("📈 အမြင့်ဆုံးစျေး (High)", f"{morning_live_df['High'].max():.2f}")
-        m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{morning_live_df['Low'].min():.2f}")
-        
-        st.write(f"📈 **မနက်ပိုင်း ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(morning_live_df)} ခု)**")
-        cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in morning_live_df.columns]
-        st.dataframe(morning_live_df[cols_to_show].tail(10), use_container_width=True)
-        
-        fig = px.line(morning_live_df, x="Time", y="Close", title="SET Index Morning Movement", markers=True)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("ယနေ့အတွက် မနက်ပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
-    
-    # ၁၁:၃၅ ကျော်မှသာ (သို့မဟုတ် ခလုတ်နှိပ်၍) ဂဏန်းပြသရန် စီစဉ်ခြင်း
-    # (၁၁:၃၅ မိနစ်သည် 11 * 60 + 35 = 695 ဖြစ်သည်)
-    target_show_time = 11 * 60 + 35
-    
-    if current_time_val >= target_show_time or st.button("🔮 ၁၁:၃၅ ပြီးနောက် ခန့်မှန်းဂဏန်းများ ထုတ်ရန်"):
-        if not morning_pred_df.empty:
-            last_close = morning_pred_df.iloc[-1]["Close"]
-            base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
-            trend_diff = last_close - morning_pred_df.iloc[0]["Close"]
-            
-            offset = 1 if trend_diff >= 0 else 3
-            p1 = (base_digit + offset) % 10
-            p2 = (base_digit + offset + 3) % 10
-            p3 = (base_digit + offset + 6) % 10
-            
-            st.success(f"🎯 ၁၂:၀၁ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး (၁၁:၃၀ ထိ ဒေတာအခြေခံ):")
-            st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
-            st.caption(f"အခြေခံဈေး (၁၁:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
-        else:
-            st.warning("⚠️ ၁၁:၃၀ အထိ လုံလောက်သော ဒေတာ မရှိသေးပါ။")
-    else:
-        st.info("⏰ မနက် ၁၁:၃၅ ကျော်မှသာ ဤနေရာတွင် ခန့်မှန်းဂဏန်း (၃) လုံး အလိုအလျောက် ပေါ်လာမည်ဖြစ်ပြီး ညနေအထိ ဆက်ပြနေမည် ဖြစ်ပါသည်။")
-
+st.subheader("ðŸ“š Historical Pattern Records")
+if patterns.empty:
+    st.info("Pattern record á€™á€›á€¾á€­á€žá€±á€¸á€•á€«á‹ á€¡á€±á€¬á€€á€ºá€€ form á€™á€¾á€¬ á€‘á€Šá€·á€ºá€•á€«á‹")
 else:
-    st.subheader("🎯 ညနေပိုင်း Session (၄:၁၀ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ အထိ ဈေးနှုန်းများကို ပြသသည်။ (၃:၃၅ တွင် ဂဏန်းထွက်ပြီး ဈေးပိတ်သည်အထိ ဆက်ပြမည်)")
-    
-    evening_live_df = pd.DataFrame()
-    evening_pred_df = pd.DataFrame()
-    current_time_val = datetime.now().hour * 60 + datetime.now().minute
-    
-    if df is not None and not df.empty and "Dt" in df.columns:
-        today_date = df["Dt"].dt.date.max()
-        evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 13 * 60)]
-        # ၁:၀၀ မှ ၃:၃၀ အတွင်း ဒေတာများကို ခန့်မှန်းရန် စုဆောင်းသည်
-        evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 13 * 60) & (df["time_val"] <= 15 * 60 + 30)]
-    
-    if not evening_live_df.empty:
-        latest_row = evening_live_df.iloc[-1]
-        first_row = evening_live_df.iloc[0]
-        price_diff = latest_row["Close"] - first_row["Close"]
-        pct_change = (price_diff / first_row["Close"]) * 100
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("🔴 ညနေပိုင်း ပိတ်သိမ်းစျေး အခြေအနေ", f"{latest_row['Close']:.2f}", f"{price_diff:+.2f} ({pct_change:+.2f}%)")
-        m2.metric("📈 အမြင့်ဆုံးစျေး (High)", f"{evening_live_df['High'].max():.2f}")
-        m3.metric("📉 အနိမ့်ဆုံးစျေး (Low)", f"{evening_live_df['Low'].min():.2f}")
-        
-        st.write(f"📈 **ညနေပိုင်း ဈေးနှုန်း မှတ်တမ်းများ (စုစုပေါင်း {len(evening_live_df)} ခု)**")
-        cols_to_show = [c for c in ["Time", "Open", "High", "Low", "Close", "Volume"] if c in evening_live_df.columns]
-        st.dataframe(evening_live_df[cols_to_show].tail(10), use_container_width=True)
-        
-        fig = px.line(evening_live_df, x="Time", y="Close", title="SET Index Evening Movement", markers=True)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("ယနေ့အတွက် ညနေပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
-    
-    # ၃:၃၅ ကျော်မှသာ (သို့မဟုတ် ခလုတ်နှိပ်၍) ဂဏန်းပြသရန် စီစဉ်ခြင်း
-    # (၃:၃၅ မိနစ်သည် 15 * 60 + 35 = 935 ဖြစ်သည်)
-    target_evening_show_time = 15 * 60 + 35
-    
-    if current_time_val >= target_evening_show_time or st.button("🔮 ၃:၃၅ ပြီးနောက် ညနေခန့်မှန်းဂဏန်းများ ထုတ်ရန်"):
-        if not evening_pred_df.empty:
-            last_close = evening_pred_df.iloc[-1]["Close"]
-            base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
-            trend_diff = last_close - evening_pred_df.iloc[0]["Close"]
-            
-            offset = 2 if trend_diff >= 0 else 4
-            p1 = (base_digit + offset) % 10
-            p2 = (base_digit + offset + 3) % 10
-            p3 = (base_digit + offset + 6) % 10
-            
-            st.success(f"🎯 ၄:၁၀ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး (၃:၃၀ ထိ ဒေတာအခြေခံ):")
-            st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
-            st.caption(f"အခြေခံဈေး (၃:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
-        else:
-            st.warning("⚠️ ၃:၃၀ အထိ လုံလောက်သော ဒေတာ မရှိသေးပါ။")
-    else:
-        st.info("⏰ ညနေ ၃:၃၅ ကျော်မှသာ ဤနေရာတွင် ညနေပိုင်း ခန့်မှန်းဂဏန်း (၃) လုံး အလိုအလျောက် ပေါ်လာမည်ဖြစ်ပြီး ဈေးပိတ်သည်အထိ ဆက်ပြနေမည် ဖြစ်ပါသည်။")
+    st.dataframe(patterns.tail(100), use_container_width=True, hide_index=True)
 
-# Telegram Bot Notification Setup
-st.subheader("📱 Telegram Bot သတိပေးချက်များ (Alert Settings)")
-with st.form("telegram_form"):
-    tg_token = st.text_input("Bot Token", type="password")
+with st.expander("âž• Completed 5-minute pattern á€‘á€Šá€·á€ºá€›á€”á€º"):
+    with st.form("pattern_form"):
+        c1, c2, c3 = st.columns(3)
+        record_date = c1.date_input("Date")
+        record_session = c2.selectbox("Session", ["morning", "evening"])
+        default_target = MORNING_TARGET if record_session == "morning" else EVENING_TARGET
+        record_target = c3.time_input("Target time", default_target)
+        rows_text = st.text_area(
+            "TIME,INDEX rows",
+            placeholder="11:55:21,1591.01\n11:56:18,1591.69\n12:00:24,1588.82"
+        )
+        actual_digit = st.number_input("Actual target last digit", 0, 9, 0)
+        save_button = st.form_submit_button("Save record")
+
+    if save_button:
+        try:
+            parsed = []
+            for line in rows_text.strip().splitlines():
+                t, price = [x.strip() for x in line.split(",")]
+                parsed.append({
+                    "Dt": pd.Timestamp(f"{record_date} {t}").tz_localize(TZ),
+                    "Close": float(price),
+                })
+            record_df = pd.DataFrame(parsed).sort_values("Dt")
+            features = calculate_features(record_df)
+            if features is None:
+                raise ValueError("á€¡á€”á€Šá€ºá€¸á€†á€¯á€¶á€¸ rows á‚ á€á€¯á€œá€­á€¯á€•á€«á€á€šá€º")
+            features.update({
+                "date": str(record_date),
+                "session": record_session,
+                "target_time": record_target.strftime("%H:%M"),
+                "pattern": label_pattern(features),
+                "target_digit": int(actual_digit),
+            })
+            save_patterns(pd.concat([patterns, pd.DataFrame([features])], ignore_index=True))
+            st.success("Pattern record á€žá€­á€™á€ºá€¸á€•á€¼á€®á€¸á€•á€«á€•á€¼á€®á‹")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Format error: {exc}")
+
+with st.expander("ðŸ“± Telegram Alert"):
+    token = st.text_input("Bot Token", type="password")
     chat_id = st.text_input("Chat ID")
-    submitted = st.form_submit_button("ချိတ်ဆက်မှု သိမ်းဆည်းမည်")
-    if submitted:
-        st.success("Telegram Bot ဆက်တင်များကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ!")
+    alert_text = st.text_area("Message", "SET pattern update")
+    if st.button("Send test alert"):
+        if not token or not chat_id:
+            st.error("Bot Token á€”á€²á€· Chat ID á€–á€¼á€Šá€·á€ºá€•á€«á‹")
+        else:
+            try:
+                send_telegram(token, chat_id, alert_text)
+                st.success("Telegram alert á€•á€­á€¯á€·á€•á€¼á€®á€¸á€•á€«á€•á€¼á€®á‹")
+            except Exception as exc:
+                st.error(f"Telegram error: {exc}")
