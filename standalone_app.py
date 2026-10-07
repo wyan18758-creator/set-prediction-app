@@ -29,6 +29,8 @@ def load_live_data():
                     df["Dt"] = df["Dt"].dt.tz_localize(None)
                 
                 df["Time"] = df["Dt"].dt.strftime("%Y-%m-%d %H:%M")
+                # Add time value in minutes from 00:00 for easy comparison
+                df["time_val"] = df["Dt"].dt.hour * 60 + df["Dt"].dt.minute
             return df
         return pd.DataFrame()
     except Exception as e:
@@ -44,19 +46,21 @@ st.divider()
 
 if "🌅 မနက်ပိုင်း" in session_tab:
     st.subheader("🎯 မနက်ပိုင်း Session (၁၂:၀၁ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ Live ဈေးနှုန်းများကို ပြသသည်။ (စျေးပိတ်သွားပါက နောက်ဆုံးပိတ်စျေး အခြေအနေကို ဆက်ပြမည်)")
+    st.info("📌 မနက် ၉:၀၀ နာရီမှ ၁၂:၀၁ မိနစ်အထိ Live ဈေးနှုန်းများကို ပြသသည်။ (၁၁:၃၅ တွင် ဂဏန်းထွက်ပြီး တစ်နေ့ကုန်သည်အထိ ဆက်ပြမည်)")
     
     morning_live_df = pd.DataFrame()
     morning_pred_df = pd.DataFrame()
+    current_time_val = datetime.now().hour * 60 + datetime.now().minute
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(12, 1))]
+        morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 12 * 1)]
         
         if morning_live_df.empty:
-            morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(13, 0))]
+            morning_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 13 * 60)]
             
-        morning_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(9, 0)) & (df["Dt"].dt.time <= time(11, 30))]
+        # ၉:၀၀ မှ ၁၁:၃၀ အတွင်း ဒေတာများကို ခန့်မှန်းရန် စုဆောင်းသည်
+        morning_pred_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 9 * 60) & (df["time_val"] <= 11 * 30)]
     
     if not morning_live_df.empty:
         latest_row = morning_live_df.iloc[-1]
@@ -78,7 +82,11 @@ if "🌅 မနက်ပိုင်း" in session_tab:
     else:
         st.warning("ယနေ့အတွက် မနက်ပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
-    if st.button("🔮 ၁၁:၃၀ နာရီတွင် မနက် ၁၂:၀၁ အပိတ်စျေး ခန့်မှန်းရန်"):
+    # ၁၁:၃၅ ကျော်မှသာ (သို့မဟုတ် ခလုတ်နှိပ်၍) ဂဏန်းပြသရန် စီစဉ်ခြင်း
+    # (၁၁:၃၅ မိနစ်သည် 11 * 60 + 35 = 695 ဖြစ်သည်)
+    target_show_time = 11 * 60 + 35
+    
+    if current_time_val >= target_show_time or st.button("🔮 ၁၁:၃၅ ပြီးနောက် ခန့်မှန်းဂဏန်းများ ထုတ်ရန်"):
         if not morning_pred_df.empty:
             last_close = morning_pred_df.iloc[-1]["Close"]
             base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
@@ -89,23 +97,27 @@ if "🌅 မနက်ပိုင်း" in session_tab:
             p2 = (base_digit + offset + 3) % 10
             p3 = (base_digit + offset + 6) % 10
             
-            st.success(f"🎯 ၁၂:၀၁ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး:")
+            st.success(f"🎯 ၁၂:၀၁ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး (၁၁:၃၀ ထိ ဒေတာအခြေခံ):")
             st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
             st.caption(f"အခြေခံဈေး (၁၁:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
         else:
-            st.warning("⚠️ ခန့်မှန်းရန် လုံလောက်သော ဒေတာ မရှိသေးပါ။")
+            st.warning("⚠️ ၁၁:၃၀ အထိ လုံလောက်သော ဒေတာ မရှိသေးပါ။")
+    else:
+        st.info("⏰ မနက် ၁၁:၃၅ ကျော်မှသာ ဤနေရာတွင် ခန့်မှန်းဂဏန်း (၃) လုံး အလိုအလျောက် ပေါ်လာမည်ဖြစ်ပြီး ညနေအထိ ဆက်ပြနေမည် ဖြစ်ပါသည်။")
 
 else:
     st.subheader("🎯 ညနေပိုင်း Session (၄:၁၀ မိနစ် အပိတ်စျေး ခန့်မှန်းချက်)")
-    st.info("📌 နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ အထိ ဈေးနှုန်းများကို ပြသသည်။ (စျေးပိတ်သွားပါက နောက်ဆုံးပိတ်စျေး အခြေအနေကို ဆက်ပြမည်)")
+    st.info("📌 နေ့လယ် ၁:၀၀ နာရီမှ ညနေ ၄:၁၀ အထိ ဈေးနှုန်းများကို ပြသသည်။ (၃:၃၅ တွင် ဂဏန်းထွက်ပြီး ဈေးပိတ်သည်အထိ ဆက်ပြမည်)")
     
     evening_live_df = pd.DataFrame()
     evening_pred_df = pd.DataFrame()
+    current_time_val = datetime.now().hour * 60 + datetime.now().minute
     
     if df is not None and not df.empty and "Dt" in df.columns:
         today_date = df["Dt"].dt.date.max()
-        evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0))]
-        evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["Dt"].dt.time >= time(13, 0)) & (df["Dt"].dt.time <= time(15, 30))]
+        evening_live_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 13 * 60)]
+        # ၁:၀၀ မှ ၃:၃၀ အတွင်း ဒေတာများကို ခန့်မှန်းရန် စုဆောင်းသည်
+        evening_pred_df = df[(df["Dt"].dt.date == today_date) & (df["time_val"] >= 13 * 60) & (df["time_val"] <= 15 * 60 + 30)]
     
     if not evening_live_df.empty:
         latest_row = evening_live_df.iloc[-1]
@@ -127,7 +139,11 @@ else:
     else:
         st.warning("ယနေ့အတွက် ညနေပိုင်း ဒေတာများ မရရှိသေးပါ (သို့မဟုတ် ဈေးပိတ်ရက် ဖြစ်နေပါသည်)။")
     
-    if st.button("🔮 ၃:၃၀ နာရီတွင် ညနေ ၄:၁၀ အပိတ်စျေး ခန့်မှန်းရန်"):
+    # ၃:၃၅ ကျော်မှသာ (သို့မဟုတ် ခလုတ်နှိပ်၍) ဂဏန်းပြသရန် စီစဉ်ခြင်း
+    # (၃:၃၅ မိနစ်သည် 15 * 60 + 35 = 935 ဖြစ်သည်)
+    target_evening_show_time = 15 * 60 + 35
+    
+    if current_time_val >= target_evening_show_time or st.button("🔮 ၃:၃၅ ပြီးနောက် ညနေခန့်မှန်းဂဏန်းများ ထုတ်ရန်"):
         if not evening_pred_df.empty:
             last_close = evening_pred_df.iloc[-1]["Close"]
             base_digit = int(f"{last_close:.2f}".split(".")[1][-1])
@@ -138,11 +154,13 @@ else:
             p2 = (base_digit + offset + 3) % 10
             p3 = (base_digit + offset + 6) % 10
             
-            st.success(f"🎯 ၄:၁၀ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး:")
+            st.success(f"🎯 ၄:၁၀ မိနစ် အပိတ်စျေးအတွက် ခန့်မှန်းဒသမနောက်ဆုံးဂဏန်း (၃) လုံး (၃:၃၀ ထိ ဒေတာအခြေခံ):")
             st.markdown(f"### `🔮 {p1} ၊ {p2} ၊ {p3}`")
             st.caption(f"အခြေခံဈေး (၃:၃၀ အထိ): {last_close:.2f} | Base Digit: {base_digit}")
         else:
-            st.warning("⚠️ ခန့်မှန်းရန် လုံလောက်သော ဒေတာ မရှိသေးပါ။")
+            st.warning("⚠️ ၃:၃၀ အထိ လုံလောက်သော ဒေတာ မရှိသေးပါ။")
+    else:
+        st.info("⏰ ညနေ ၃:၃၅ ကျော်မှသာ ဤနေရာတွင် ညနေပိုင်း ခန့်မှန်းဂဏန်း (၃) လုံး အလိုအလျောက် ပေါ်လာမည်ဖြစ်ပြီး ဈေးပိတ်သည်အထိ ဆက်ပြနေမည် ဖြစ်ပါသည်။")
 
 # Telegram Bot Notification Setup
 st.subheader("📱 Telegram Bot သတိပေးချက်များ (Alert Settings)")
